@@ -1,75 +1,58 @@
-import TelegramBot from 'node-telegram-bot-api';
-import {
+const TelegramBot = require('node-telegram-bot-api');
+const {
   toFile
-} from 'qrcode';
-import {
+} = require('qrcode');
+const {
   fileSync
-} from 'tmp';
-import fs from 'fs';
-import {
+} = require('tmp');
+const fs = require('fs');
+const {
   ethers,
   constants
-} from 'ethers';
-import dotenv from 'dotenv';
+} = require('ethers');
+const dotenv = require('dotenv');
 
 dotenv.config();
 
-process.noDeprecation = true; // 非推奨警告を無視
+process.noDeprecation = true; // Ignore deprecation warnings
 
-// Ethereumプロバイダーの設定
+// Setting up Ethereum provider
 const provider = new ethers.JsonRpcProvider(`${process.env.ETHEREUM_RPC_URL}`);
 
-// ENSアドレスを解決する関数
-async function resolveENSName(name, chatId) {
-  try {
-    bot.sendMessage(chatId, `Searching for ENS name: ${name}`);
-    const address = await provider.resolveName(name);
-    if (address && address !== constants.AddressZero) {
-      bot.sendMessage(chatId, `Found address: ${address}`);
-      return address;
-    } else {
-      bot.sendMessage(chatId, `No address found for ENS name: ${name}`);
-      return null;
-    }
-  } catch (error) {
-    bot.sendMessage(chatId, `Failed to resolve ENS name: ${name}`);
-    console.error('Failed to resolve ENS name:', error);
-    return null;
-  }
-}
-
-// BotのAPIトークンを設定
+// Setting up bot API token
 const token = `${process.env.TG_API_KEY}`;
 const bot = new TelegramBot(token, {
   polling: true
 });
 
-// ポーリングエラーの処理
+// Handling polling errors
 bot.on('polling_error', (error) => {
   console.error('Polling error:', error.code, error.message);
-  // 再試行のための対策
+  // Retry mechanism
   setTimeout(() => {
     bot.startPolling();
-  }, 10000); // 10秒後に再試行
+  }, 10000); // Retry after 10 seconds
 });
 
-// ユーザーの初回訪問を追跡するためのセット
+// Set to track first-time users
 const users = new Set();
-const activeRequests = new Map(); // アクティブなリクエストを追跡
+const activeRequests = new Map(); // Track active requests
 
-// チェーンIDをマッピング
+// Mapping chain IDs
 const chainIds = {
-  'Ethereum': '84532',
+  'Base': '84532',
   'Optimism': '11155420',
-  'Arbitrum': '000' // ここは例として '000' を使用します。他のチェーンIDがあれば更新してください。
+  'Blast': '168587773',
+  'Scroll': '534351',
+  'Zksync': '300'
 };
 
-// タイムアウト時間の設定（ミリ秒）
-const TIMEOUT_DURATION = 600000; // 10分
+// Setting timeout duration (milliseconds)
+const TIMEOUT_DURATION = 600000; // 10 minutes
 
-// メインメニューを表示する関数
+// Function to show main menu
 function showMainMenu(chatId) {
-  clearRequestTimeout(chatId); // メインメニューではタイムアウトを解除
+  clearRequestTimeout(chatId); // Clear timeout in main menu
   bot.sendMessage(chatId, "Choose an option:", {
     reply_markup: {
       keyboard: [
@@ -86,9 +69,9 @@ function showMainMenu(chatId) {
   });
 }
 
-// タイムアウトを設定する関数
+// Function to set request timeout
 function setRequestTimeout(chatId) {
-  clearRequestTimeout(chatId); // 既存のタイムアウトをクリア
+  clearRequestTimeout(chatId); // Clear existing timeout
   const timeout = setTimeout(() => {
     bot.sendMessage(chatId, "Timeout occurred. Please start again.");
     showMainMenu(chatId);
@@ -97,7 +80,7 @@ function setRequestTimeout(chatId) {
   activeRequests.set(chatId, timeout);
 }
 
-// タイムアウトをクリアする関数
+// Function to clear request timeout
 function clearRequestTimeout(chatId) {
   if (activeRequests.has(chatId)) {
     clearTimeout(activeRequests.get(chatId));
@@ -105,8 +88,9 @@ function clearRequestTimeout(chatId) {
   }
 }
 
-// ウォレットアドレスを取得する関数
+// Function to get wallet address
 async function getWalletAddress(ensName) {
+  console.log('Getting wallet address for ENS name:', ensName);
   try {
     const address = await provider.resolveName(ensName);
     if (address) {
@@ -122,9 +106,12 @@ async function getWalletAddress(ensName) {
   }
 }
 
-// スタートコマンドに対するハンドラ
+// Handler for start command
 bot.onText(/\/start/, (msg) => {
+  console.log('Start command received');
+
   const chatId = msg.chat.id;
+  console.log('Chat ID:', chatId);
   if (!users.has(chatId)) {
     bot.sendMessage(chatId, "Welcome to the Magic Transfer beta! You can easily request testnet tokens without connecting a wallet.");
     users.add(chatId);
@@ -132,7 +119,7 @@ bot.onText(/\/start/, (msg) => {
   showMainMenu(chatId);
 });
 
-// メッセージハンドラ
+// Message handler
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -149,9 +136,6 @@ bot.on('message', (msg) => {
     showMainMenu(chatId);
     clearRequestTimeout(chatId);
     return;
-
-
-
   } else {
     // Ignore other text messages for now
   }
@@ -162,13 +146,19 @@ function askForChain(chatId) {
     reply_markup: {
       keyboard: [
         [{
-          text: 'Ethereum'
-        }],
-        [{
-          text: 'Arbitrum'
+          text: 'Base'
         }],
         [{
           text: 'Optimism'
+        }],
+        [{
+          text: 'Blast'
+        }],
+        [{
+          text: 'Scroll'
+        }],
+        [{
+          text: 'Zksync'
         }],
         [{
           text: 'Cancel'
@@ -181,6 +171,7 @@ function askForChain(chatId) {
   setRequestTimeout(chatId);
   bot.once('message', (msg) => {
     const chain = msg.text;
+    console.log('Chain selected:', chain);
     if (chainIds[chain]) {
       askForAmount(chain, chatId);
     } else {
@@ -197,10 +188,10 @@ function askForAmount(chain, chatId) {
       bot.sendMessage(chatId, "Request cancelled.");
       showMainMenu(chatId);
       clearRequestTimeout(chatId);
-      return; // Cancel処理後、次の処理をしないようにする
+      return; // Do not proceed after cancel
     }
 
-    if (activeRequests.has(chatId)) { // タイムアウト時に再度数量を聞かないようにする
+    if (activeRequests.has(chatId)) { // Do not ask for amount again on timeout
       const amount = parseFloat(msg.text);
       if (isNaN(amount) || amount > 0.1 || amount <= 0) {
         bot.sendMessage(chatId, "Please enter a valid amount up to 0.1ETH.");
@@ -213,9 +204,6 @@ function askForAmount(chain, chatId) {
   bot.once('message', messageHandler);
 }
 
-
-
-
 async function askForWalletAddress(chain, chatId, amount) {
   bot.sendMessage(chatId, "Please provide your wallet address or ENS name.");
   setRequestTimeout(chatId);
@@ -224,16 +212,16 @@ async function askForWalletAddress(chain, chatId, amount) {
       bot.sendMessage(chatId, "Request cancelled.");
       showMainMenu(chatId);
       clearRequestTimeout(chatId);
-      return; // Cancel処理後、次の処理をしないようにする
+      return; // Do not proceed after cancel
     }
 
-    if (activeRequests.has(chatId)) { // タイムアウト時に再度アドレスを聞かないようにする
+    if (activeRequests.has(chatId)) { // Do not ask for address again on timeout
       let address = msg.text;
       if (address.length === 42 && address.startsWith('0x')) {
-        // Ethereumアドレスのバリデーションに成功
+        // Ethereum address validation successful
         handleValidAddress(chain, chatId, amount, address);
       } else if (address.endsWith('.eth')) {
-        // ENS名前の解決を試みる
+        // Attempt to resolve ENS name
         const resolvedAddress = await getWalletAddress(address);
         if (resolvedAddress) {
           handleValidAddress(chain, chatId, amount, resolvedAddress);
@@ -250,14 +238,13 @@ async function askForWalletAddress(chain, chatId, amount) {
   bot.once('message', messageHandler);
 }
 
-
-
 function handleValidAddress(chain, chatId, amount, address) {
   const chainId = chainIds[chain] || '000';
   const url = `https://miki-frontend.vercel.app/transfer?amount=${amount}&recipient=${address}&chainId=${chainId}`;
+  console.log('Transfer link:', url);
   bot.sendMessage(chatId, `Here is your transfer link: ${url}`);
 
-  // QRコードを生成して一時ファイルに保存し、送信
+  // Generate QR code and save to temporary file
   const tmpFile = fileSync({
     postfix: '.png'
   });
@@ -269,13 +256,15 @@ function handleValidAddress(chain, chatId, amount, address) {
     bot.sendPhoto(chatId, tmpFile.name, {}, {
       contentType: 'image/png'
     }).then(() => {
-      tmpFile.removeCallback(); // 送信後に一時ファイルを削除
+      tmpFile.removeCallback(); // Remove temporary file after sending
     }).catch((error) => {
       bot.sendMessage(chatId, 'Failed to send QR Code.');
       console.error('Failed to send QR Code:', error);
     });
   });
 
-  activeRequests.delete(chatId); // 完了後、タイムアウトを解除
+  activeRequests.delete(chatId); // Clear timeout after completion
   showMainMenu(chatId);
 }
+
+console.log('Bot is running...');
